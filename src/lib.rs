@@ -6,4 +6,7 @@ mod tests {
     }
 }
 
+pub mod renderer;
+pub mod support;
 pub mod ui;
+pub mod window;

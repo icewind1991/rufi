@@ -1,9 +1,6 @@
 use conrod_core::widget::text_box::Event as TextBoxEvent;
 use conrod_core::{widget_ids, Borderable, Ui};
 
-pub const WIN_W: u32 = 600;
-pub const WIN_H: u32 = 420;
-
 pub struct AppState {
     items: Vec<String>,
     selected: usize,
@@ -25,9 +22,9 @@ pub struct MenuApp {
 
 impl MenuApp {
     /// Simple constructor for the `DemoApp`.
-    pub fn new() -> Self {
+    pub fn new(width: u32, height: u32) -> Self {
         // Create Ui and Ids of widgets to instantiate
-        let mut ui = conrod_core::UiBuilder::new([WIN_W as f64, WIN_H as f64])
+        let mut ui = conrod_core::UiBuilder::new([width as f64, height as f64])
             .theme(default_theme())
             .build();
         let ids = Ids::new(ui.widget_id_generator());
