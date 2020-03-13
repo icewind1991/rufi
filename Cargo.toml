@@ -17,5 +17,8 @@ image = "0.22"
 vulkano-win = "0.16"
 winit = "0.19"
 rand = "0.7"
-tokio = { version = "0.2.13", features = ["macros", "time"] }
+tokio = { version = "0.2.13", features = ["time"] }
 futures-util = "0.3.4"
+
+[dev-dependencies]
+tokio = { version = "0.2.13", features = ["macros"] }
