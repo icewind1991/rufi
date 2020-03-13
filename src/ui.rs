@@ -1,7 +1,12 @@
 use crate::renderer::Renderer;
 use crate::support::convert_event;
 use conrod_core::{widget_ids, Borderable, Ui};
+use futures_util::future::{select, Either};
+use futures_util::pin_mut;
 use std::cmp::min;
+use std::future::Future;
+use tokio::macros::support::Pin;
+use tokio::time::{self, Duration};
 
 pub struct AppState {
     items: Vec<String>,
@@ -23,15 +28,16 @@ pub enum Event {
 }
 
 /// A demonstration of some application state we want to control with a conrod GUI.
-pub struct MenuApp {
+pub struct MenuApp<SearchFuture: Future<Output = Vec<String>>> {
     state: AppState,
     ids: Ids,
     ui: Ui,
     events_loop: winit::EventsLoop,
     state_updated: bool,
+    search_future: Option<Pin<Box<SearchFuture>>>,
 }
 
-impl MenuApp {
+impl<SearchFuture: Future<Output = Vec<String>>> MenuApp<SearchFuture> {
     /// Simple constructor for the `DemoApp`.
     pub fn new(width: u32, height: u32, events_loop: winit::EventsLoop) -> Self {
         // Create Ui and Ids of widgets to instantiate
@@ -59,6 +65,7 @@ impl MenuApp {
             ui,
             events_loop,
             state_updated: false,
+            search_future: None,
         }
     }
 
@@ -68,51 +75,78 @@ impl MenuApp {
         self.state_updated = true;
     }
 
-    pub fn main_loop(&mut self, renderer: &mut Renderer) -> Event {
+    pub async fn main_loop<Search>(mut self, mut renderer: Renderer, search: Search) -> ()
+    where
+        Search: Fn(String) -> SearchFuture,
+    {
         let ui = &mut self.ui;
-
-        if let Some(primitives) = ui.draw_if_changed() {
-            renderer.render(primitives)
-        }
 
         let mut should_quit = false;
 
-        self.events_loop.poll_events(|event| {
-            if let Some(event) = convert_event(event.clone(), &renderer.window) {
-                ui.handle_event(event);
+        let mut vsync = time::interval(Duration::from_millis(1000 / 60));
+
+        loop {
+            if let Some(primitives) = ui.draw_if_changed() {
+                renderer.render(primitives)
             }
 
-            // Close window if the escape key or the exit button is pressed
-            match event {
-                winit::Event::WindowEvent {
-                    event:
-                        winit::WindowEvent::KeyboardInput {
-                            input:
-                                winit::KeyboardInput {
-                                    virtual_keycode: Some(winit::VirtualKeyCode::Escape),
-                                    ..
-                                },
-                            ..
-                        },
-                    ..
+            self.events_loop.poll_events(|event| {
+                if let Some(event) = convert_event(event.clone(), &renderer.window) {
+                    ui.handle_event(event);
                 }
-                | winit::Event::WindowEvent {
-                    event: winit::WindowEvent::CloseRequested,
-                    ..
-                } => should_quit = true,
-                _ => {}
-            }
-        });
-        if should_quit {
-            Event::Exit
-        } else {
-            // Update widgets if any event has happened
-            if self.ui.global_input().events().next().is_some() || self.state_updated {
-                let mut ui = self.ui.set_widgets();
-                self.state_updated = false;
-                gui(&mut ui, &self.ids, &mut self.state)
+
+                // Close window if the escape key or the exit button is pressed
+                match event {
+                    winit::Event::WindowEvent {
+                        event:
+                            winit::WindowEvent::KeyboardInput {
+                                input:
+                                    winit::KeyboardInput {
+                                        virtual_keycode: Some(winit::VirtualKeyCode::Escape),
+                                        ..
+                                    },
+                                ..
+                            },
+                        ..
+                    }
+                    | winit::Event::WindowEvent {
+                        event: winit::WindowEvent::CloseRequested,
+                        ..
+                    } => should_quit = true,
+                    _ => {}
+                }
+            });
+            if should_quit {
+                return;
             } else {
-                Event::Continue
+                // Update widgets if any event has happened
+                if ui.global_input().events().next().is_some() || self.state_updated {
+                    let mut ui = ui.set_widgets();
+                    self.state_updated = false;
+                    if let Event::Search(query) = gui(&mut ui, &self.ids, &mut self.state) {
+                        self.search_future = Some(Box::pin(search(query)));
+                    }
+                }
+            }
+
+            let tick = vsync.tick();
+            pin_mut!(tick);
+
+            match self.search_future.take() {
+                Some(search_fut) => {
+                    match select(tick, search_fut).await {
+                        Either::Left((_, search_fut)) => self.search_future = Some(search_fut), // vsync before search completion
+                        Either::Right((search_result, _)) => {
+                            // search complete before vsync
+                            self.state.items = search_result;
+                            self.state.selected = 0;
+                            self.state_updated = true;
+                        }
+                    }
+                }
+                None => {
+                    tick.await;
+                }
             }
         }
     }
