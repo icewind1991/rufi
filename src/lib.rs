@@ -1,12 +1,7 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+mod renderer;
+mod support;
+mod ui;
+mod window;
 
-pub mod renderer;
-pub mod support;
-pub mod ui;
-pub mod window;
+pub use renderer::Renderer;
+pub use ui::{AppState, Event, MenuApp};

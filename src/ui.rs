@@ -1,5 +1,7 @@
-use conrod_core::widget::text_box::Event as TextBoxEvent;
+use crate::renderer::Renderer;
+use crate::support::convert_event;
 use conrod_core::{widget_ids, Borderable, Ui};
+use std::cmp::min;
 
 pub struct AppState {
     items: Vec<String>,
@@ -13,16 +15,25 @@ impl AppState {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Event {
+    Search(String),
+    Continue,
+    Exit,
+}
+
 /// A demonstration of some application state we want to control with a conrod GUI.
 pub struct MenuApp {
     state: AppState,
     ids: Ids,
     ui: Ui,
+    events_loop: winit::EventsLoop,
+    state_updated: bool,
 }
 
 impl MenuApp {
     /// Simple constructor for the `DemoApp`.
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, events_loop: winit::EventsLoop) -> Self {
         // Create Ui and Ids of widgets to instantiate
         let mut ui = conrod_core::UiBuilder::new([width as f64, height as f64])
             .theme(default_theme())
@@ -36,29 +47,73 @@ impl MenuApp {
         let font_path = assets.join("fonts/NotoSans/NotoSans-Regular.ttf");
         ui.fonts.insert_from_file(font_path).unwrap();
 
+        ui.keyboard_capture(ids.input);
+
         MenuApp {
             state: AppState {
                 items: vec!["Foo".to_string(), "Bar".to_string()],
                 selected: 0,
-                search: String::from("Search..."),
+                search: String::from(""),
             },
             ids,
             ui,
+            events_loop,
+            state_updated: false,
         }
     }
 
-    pub fn draw_if_changed(&self) -> Option<conrod_core::render::Primitives> {
-        self.ui.draw_if_changed()
+    pub fn set_items(&mut self, items: Vec<String>) {
+        self.state.items = items;
+        self.state.selected = min(self.state.selected, self.state.items.len());
+        self.state_updated = true;
     }
 
-    pub fn handle_event(&mut self, event: conrod_core::event::Input) {
-        self.ui.handle_event(event);
-    }
+    pub fn main_loop(&mut self, renderer: &mut Renderer) -> Event {
+        let ui = &mut self.ui;
 
-    pub fn handle_global_input(&mut self) {
-        if self.ui.global_input().events().next().is_some() {
-            let mut ui = self.ui.set_widgets();
-            gui(&mut ui, &self.ids, &mut self.state);
+        if let Some(primitives) = ui.draw_if_changed() {
+            renderer.render(primitives)
+        }
+
+        let mut should_quit = false;
+
+        self.events_loop.poll_events(|event| {
+            if let Some(event) = convert_event(event.clone(), &renderer.window) {
+                ui.handle_event(event);
+            }
+
+            // Close window if the escape key or the exit button is pressed
+            match event {
+                winit::Event::WindowEvent {
+                    event:
+                        winit::WindowEvent::KeyboardInput {
+                            input:
+                                winit::KeyboardInput {
+                                    virtual_keycode: Some(winit::VirtualKeyCode::Escape),
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                }
+                | winit::Event::WindowEvent {
+                    event: winit::WindowEvent::CloseRequested,
+                    ..
+                } => should_quit = true,
+                _ => {}
+            }
+        });
+        if should_quit {
+            Event::Exit
+        } else {
+            // Update widgets if any event has happened
+            if self.ui.global_input().events().next().is_some() || self.state_updated {
+                let mut ui = self.ui.set_widgets();
+                self.state_updated = false;
+                gui(&mut ui, &self.ids, &mut self.state)
+            } else {
+                Event::Continue
+            }
         }
     }
 }
@@ -99,33 +154,28 @@ widget_ids! {
 }
 
 /// Instantiate a GUI demonstrating every widget available in conrod.
-pub fn gui(ui: &mut conrod_core::UiCell, ids: &Ids, app: &mut AppState) {
+pub fn gui(ui: &mut conrod_core::UiCell, ids: &Ids, app: &mut AppState) -> Event {
     use conrod_core::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
 
-    const MARGIN: conrod_core::Scalar = 30.0;
+    const MARGIN: conrod_core::Scalar = 2.0;
     const SUBTITLE_SIZE: conrod_core::FontSize = 32;
     widget::Canvas::new()
         .pad(MARGIN)
         .scroll_kids_vertically()
         .set(ids.canvas, ui);
 
-    for event in widget::TextBox::new(&app.search)
+    let search = widget::TextEdit::new(&app.search)
         .font_size(SUBTITLE_SIZE)
         .mid_top_of(ids.canvas)
-        .set(ids.input, ui)
-    {
-        match event {
-            TextBoxEvent::Update(text) => app.set_search(text),
-            _ => {}
-        }
-    }
+        .h(38.0)
+        .set(ids.input, ui);
 
     let (mut events, scrollbar) = widget::ListSelect::single(app.items.len())
         .flow_down()
         .item_size(30.0)
         .scrollbar_next_to()
         .w_h(400.0, 230.0)
-        .mid_bottom_of(ids.canvas)
+        .align_middle_x_of(ids.canvas)
         .set(ids.items, ui);
 
     // Handle the `ListSelect`s events.
@@ -160,5 +210,13 @@ pub fn gui(ui: &mut conrod_core::UiCell, ids: &Ids, app: &mut AppState) {
     // Instantiate the scrollbar for the list.
     if let Some(s) = scrollbar {
         s.set(ui);
+    }
+
+    match search {
+        Some(search) => {
+            app.set_search(search.clone());
+            Event::Search(search)
+        }
+        None => Event::Continue,
     }
 }
