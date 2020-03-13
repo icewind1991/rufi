@@ -3,9 +3,9 @@ use crate::support::convert_event;
 use conrod_core::{widget_ids, Borderable, Ui};
 use futures_util::future::{select, Either};
 use futures_util::pin_mut;
+use std::cmp::min;
 use std::fmt::Display;
 use std::future::Future;
-use tokio::macros::support::Pin;
 use tokio::time::{self, Duration};
 
 pub struct AppState<Item: Display> {
@@ -28,16 +28,14 @@ pub enum Event {
 }
 
 /// A demonstration of some application state we want to control with a conrod GUI.
-pub struct MenuApp<Item: Display, SearchFuture: Future<Output = Vec<Item>>> {
+pub struct MenuApp<Item: Display> {
     state: AppState<Item>,
     ids: Ids,
     ui: Ui,
     events_loop: winit::EventsLoop,
-    state_updated: bool,
-    search_future: Option<Pin<Box<SearchFuture>>>,
 }
 
-impl<Item: Display, SearchFuture: Future<Output = Vec<Item>>> MenuApp<Item, SearchFuture> {
+impl<Item: Display> MenuApp<Item> {
     /// Simple constructor for the `DemoApp`.
     pub fn new(width: u32, height: u32, events_loop: winit::EventsLoop) -> Self {
         // Create Ui and Ids of widgets to instantiate
@@ -64,33 +62,40 @@ impl<Item: Display, SearchFuture: Future<Output = Vec<Item>>> MenuApp<Item, Sear
             ids,
             ui,
             events_loop,
-            state_updated: false,
-            search_future: None,
         }
     }
 
     pub fn set_items(&mut self, items: Vec<Item>) {
         self.state.items = items;
         self.state.selected = 0;
-        self.state_updated = true;
     }
 
-    pub async fn main_loop<Search>(mut self, mut renderer: Renderer, search: Search) -> ()
+    pub async fn main_loop<Search, SearchFuture>(self, mut renderer: Renderer, search: Search) -> ()
     where
         Search: Fn(String) -> SearchFuture,
+        SearchFuture: Future<Output = Vec<Item>>,
     {
-        let ui = &mut self.ui;
-
         let mut should_quit = false;
 
         let mut vsync = time::interval(Duration::from_millis(1000 / 60));
+
+        let MenuApp {
+            mut state,
+            ids,
+            mut ui,
+            mut events_loop,
+        } = self;
+
+        let mut state_updated = false;
+
+        let mut search_future = None;
 
         loop {
             if let Some(primitives) = ui.draw_if_changed() {
                 renderer.render(primitives)
             }
 
-            self.events_loop.poll_events(|event| {
+            events_loop.poll_events(|event| {
                 if let Some(event) = convert_event(event.clone(), &renderer.window) {
                     ui.handle_event(event);
                 }
@@ -102,14 +107,25 @@ impl<Item: Display, SearchFuture: Future<Output = Vec<Item>>> MenuApp<Item, Sear
                             winit::WindowEvent::KeyboardInput {
                                 input:
                                     winit::KeyboardInput {
-                                        virtual_keycode: Some(winit::VirtualKeyCode::Escape),
-                                        ..
+                                        virtual_keycode, ..
                                     },
                                 ..
                             },
                         ..
-                    }
-                    | winit::Event::WindowEvent {
+                    } => match virtual_keycode {
+                        Some(winit::VirtualKeyCode::Escape) => should_quit = true,
+                        Some(winit::VirtualKeyCode::Up) => {
+                            state.selected = state.selected.saturating_sub(1);
+                            state_updated = true;
+                        }
+                        Some(winit::VirtualKeyCode::Down) => {
+                            state.selected =
+                                min(state.selected + 1, state.items.len().saturating_sub(1));
+                            state_updated = true;
+                        }
+                        _ => {}
+                    },
+                    winit::Event::WindowEvent {
                         event: winit::WindowEvent::CloseRequested,
                         ..
                     } => should_quit = true,
@@ -120,11 +136,11 @@ impl<Item: Display, SearchFuture: Future<Output = Vec<Item>>> MenuApp<Item, Sear
                 return;
             } else {
                 // Update widgets if any event has happened
-                if ui.global_input().events().next().is_some() || self.state_updated {
+                if ui.global_input().events().next().is_some() || state_updated {
                     let mut ui = ui.set_widgets();
-                    self.state_updated = false;
-                    if let Event::Search(query) = gui(&mut ui, &self.ids, &mut self.state) {
-                        self.search_future = Some(Box::pin(search(query)));
+                    state_updated = false;
+                    if let Event::Search(query) = gui(&mut ui, &ids, &mut state) {
+                        search_future = Some(Box::pin(search(query)));
                     }
                 }
             }
@@ -132,15 +148,15 @@ impl<Item: Display, SearchFuture: Future<Output = Vec<Item>>> MenuApp<Item, Sear
             let tick = vsync.tick();
             pin_mut!(tick);
 
-            match self.search_future.take() {
+            match search_future.take() {
                 Some(search_fut) => {
                     match select(tick, search_fut).await {
-                        Either::Left((_, search_fut)) => self.search_future = Some(search_fut), // vsync before search completion
+                        Either::Left((_, search_fut)) => search_future = Some(search_fut), // vsync before search completion
                         Either::Right((search_result, _)) => {
                             // search complete before vsync
-                            self.state.items = search_result;
-                            self.state.selected = 0;
-                            self.state_updated = true;
+                            state.items = search_result;
+                            state.selected = 0;
+                            state_updated = true;
                         }
                     }
                 }
