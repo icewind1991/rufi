@@ -7,6 +7,7 @@ use std::cmp::min;
 use std::fmt::Display;
 use std::future::Future;
 use tokio::time::{self, Duration};
+use winit::ElementState;
 
 pub struct AppState<Item: Display> {
     items: Vec<Item>,
@@ -107,7 +108,9 @@ impl<Item: Display> MenuApp<Item> {
                             winit::WindowEvent::KeyboardInput {
                                 input:
                                     winit::KeyboardInput {
-                                        virtual_keycode, ..
+                                        virtual_keycode,
+                                        state: ElementState::Pressed,
+                                        ..
                                     },
                                 ..
                             },
@@ -212,7 +215,7 @@ pub fn gui<Item: Display>(
     use conrod_core::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
 
     const MARGIN: conrod_core::Scalar = 2.0;
-    const SUBTITLE_SIZE: conrod_core::FontSize = 32;
+    const SUBTITLE_SIZE: conrod_core::FontSize = 16;
     widget::Canvas::new()
         .pad(MARGIN)
         .scroll_kids_vertically()
@@ -221,15 +224,17 @@ pub fn gui<Item: Display>(
     let search = widget::TextEdit::new(&app.search)
         .font_size(SUBTITLE_SIZE)
         .mid_top_of(ids.canvas)
-        .h(38.0)
+        .w_of(ids.canvas)
+        .h(SUBTITLE_SIZE as f64 + 1.0)
         .set(ids.input, ui);
 
     let (mut events, scrollbar) = widget::ListSelect::single(app.items.len())
         .flow_down()
-        .item_size(30.0)
+        .item_size(SUBTITLE_SIZE as f64 + 2.0)
         .scrollbar_next_to()
-        .w_h(400.0, 230.0)
-        .align_middle_x_of(ids.canvas)
+        .h(360.0)
+        .w_of(ids.canvas)
+        .align_left()
         .set(ids.items, ui);
 
     // Handle the `ListSelect`s events.
@@ -240,14 +245,15 @@ pub fn gui<Item: Display>(
             Event::Item(item) => {
                 let label = app.items[item.i].to_string();
                 let color = match item.i == app.selected {
-                    true => ui.theme.label_color,
+                    true => ui.theme.shape_color,
                     false => ui.theme.background_color,
                 };
                 let button = widget::Button::new()
                     .border(0.0)
                     .color(color)
                     .label(&label)
-                    .label_font_size(20);
+                    .left_justify_label()
+                    .label_font_size(SUBTITLE_SIZE);
                 item.set(button, ui);
             }
 

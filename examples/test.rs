@@ -15,7 +15,36 @@ async fn main() {
 
     app.main_loop(renderer, |query| async move {
         tokio::time::delay_for(Duration::from_millis(100)).await; // debounce
-        vec![format!("foo{}", query), format!("bar{}", query)]
+        vec![
+            format!("foo{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("foo{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+            format!("bar{}", query),
+        ]
     })
     .await;
 }
