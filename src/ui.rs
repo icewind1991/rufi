@@ -3,18 +3,18 @@ use crate::support::convert_event;
 use conrod_core::{widget_ids, Borderable, Ui};
 use futures_util::future::{select, Either};
 use futures_util::pin_mut;
-use std::cmp::min;
+use std::fmt::Display;
 use std::future::Future;
 use tokio::macros::support::Pin;
 use tokio::time::{self, Duration};
 
-pub struct AppState {
-    items: Vec<String>,
+pub struct AppState<Item: Display> {
+    items: Vec<Item>,
     selected: usize,
     search: String,
 }
 
-impl AppState {
+impl<Item: Display> AppState<Item> {
     pub fn set_search(&mut self, search: String) {
         self.search = search
     }
@@ -28,8 +28,8 @@ pub enum Event {
 }
 
 /// A demonstration of some application state we want to control with a conrod GUI.
-pub struct MenuApp<SearchFuture: Future<Output = Vec<String>>> {
-    state: AppState,
+pub struct MenuApp<Item: Display, SearchFuture: Future<Output = Vec<Item>>> {
+    state: AppState<Item>,
     ids: Ids,
     ui: Ui,
     events_loop: winit::EventsLoop,
@@ -37,7 +37,7 @@ pub struct MenuApp<SearchFuture: Future<Output = Vec<String>>> {
     search_future: Option<Pin<Box<SearchFuture>>>,
 }
 
-impl<SearchFuture: Future<Output = Vec<String>>> MenuApp<SearchFuture> {
+impl<Item: Display, SearchFuture: Future<Output = Vec<Item>>> MenuApp<Item, SearchFuture> {
     /// Simple constructor for the `DemoApp`.
     pub fn new(width: u32, height: u32, events_loop: winit::EventsLoop) -> Self {
         // Create Ui and Ids of widgets to instantiate
@@ -57,7 +57,7 @@ impl<SearchFuture: Future<Output = Vec<String>>> MenuApp<SearchFuture> {
 
         MenuApp {
             state: AppState {
-                items: vec!["Foo".to_string(), "Bar".to_string()],
+                items: vec![],
                 selected: 0,
                 search: String::from(""),
             },
@@ -69,9 +69,9 @@ impl<SearchFuture: Future<Output = Vec<String>>> MenuApp<SearchFuture> {
         }
     }
 
-    pub fn set_items(&mut self, items: Vec<String>) {
+    pub fn set_items(&mut self, items: Vec<Item>) {
         self.state.items = items;
-        self.state.selected = min(self.state.selected, self.state.items.len());
+        self.state.selected = 0;
         self.state_updated = true;
     }
 
@@ -188,7 +188,11 @@ widget_ids! {
 }
 
 /// Instantiate a GUI demonstrating every widget available in conrod.
-pub fn gui(ui: &mut conrod_core::UiCell, ids: &Ids, app: &mut AppState) -> Event {
+pub fn gui<Item: Display>(
+    ui: &mut conrod_core::UiCell,
+    ids: &Ids,
+    app: &mut AppState<Item>,
+) -> Event {
     use conrod_core::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
 
     const MARGIN: conrod_core::Scalar = 2.0;
@@ -218,7 +222,7 @@ pub fn gui(ui: &mut conrod_core::UiCell, ids: &Ids, app: &mut AppState) -> Event
         match event {
             // For the `Item` events we instantiate the `List`'s items.
             Event::Item(item) => {
-                let label = &app.items[item.i];
+                let label = app.items[item.i].to_string();
                 let color = match item.i == app.selected {
                     true => ui.theme.label_color,
                     false => ui.theme.background_color,
@@ -226,7 +230,7 @@ pub fn gui(ui: &mut conrod_core::UiCell, ids: &Ids, app: &mut AppState) -> Event
                 let button = widget::Button::new()
                     .border(0.0)
                     .color(color)
-                    .label(label)
+                    .label(&label)
                     .label_font_size(20);
                 item.set(button, ui);
             }
