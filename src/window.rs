@@ -45,6 +45,19 @@ impl Window {
             .build_vk_surface(events_loop, instance.clone())
             .unwrap();
 
+        let monitor = surface.window().get_primary_monitor();
+        let (x_pos, y_pos): (f64, f64) = monitor.get_position().into();
+        let (x_size, y_size): (f64, f64) = monitor.get_dimensions().into();
+
+        surface.window().set_position(
+            (
+                x_pos + (x_size - width as f64) / 2.0,
+                y_pos + (y_size - height as f64) / 2.0,
+            )
+                .into(),
+        );
+        surface.window().set_decorations(false);
+
         let queue = physical
             .queue_families()
             .find(|&q| q.supports_graphics() && surface.is_supported(q).unwrap_or(false))
