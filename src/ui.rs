@@ -132,6 +132,10 @@ impl<Item: Display> MenuApp<Item> {
                         event: winit::WindowEvent::CloseRequested,
                         ..
                     } => should_quit = true,
+                    winit::Event::WindowEvent {
+                        event: winit::WindowEvent::Focused(focused),
+                        ..
+                    } => should_quit = !focused,
                     _ => {}
                 }
             });
