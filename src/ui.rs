@@ -1,5 +1,6 @@
 use crate::renderer::Renderer;
 use crate::support::convert_event;
+use conrod_core::text::FontCollection;
 use conrod_core::{widget_ids, Borderable, Ui};
 use futures_util::future::{select, Either};
 use futures_util::pin_mut;
@@ -45,12 +46,11 @@ impl<Item: Display> MenuApp<Item> {
             .build();
         let ids = Ids::new(ui.widget_id_generator());
 
-        // Load font from file
-        let assets = find_folder::Search::KidsThenParents(3, 5)
-            .for_folder("assets")
-            .unwrap();
-        let font_path = assets.join("fonts/NotoSans/NotoSans-Regular.ttf");
-        ui.fonts.insert_from_file(font_path).unwrap();
+        let font_collection = FontCollection::from_bytes(
+            include_bytes!("../assets/fonts/NotoSans/NotoSans-Regular.ttf").to_vec(),
+        )
+        .unwrap();
+        ui.fonts.insert(font_collection.into_font().unwrap());
 
         ui.keyboard_capture(ids.input);
 
@@ -71,12 +71,17 @@ impl<Item: Display> MenuApp<Item> {
         self.state.selected = 0;
     }
 
-    pub async fn main_loop<Search, SearchFuture>(self, mut renderer: Renderer, search: Search) -> ()
+    pub async fn main_loop<Search, SearchFuture>(
+        self,
+        mut renderer: Renderer,
+        search: Search,
+    ) -> Option<Item>
     where
         Search: Fn(String) -> SearchFuture,
         SearchFuture: Future<Output = Vec<Item>>,
     {
         let mut should_quit = false;
+        let mut result = None;
 
         let mut vsync = time::interval(Duration::from_millis(1000 / 60));
 
@@ -116,6 +121,14 @@ impl<Item: Display> MenuApp<Item> {
                             },
                         ..
                     } => match virtual_keycode {
+                        Some(winit::VirtualKeyCode::Return) => {
+                            result = if state.items.len() > state.selected {
+                                Some(state.items.remove(state.selected))
+                            } else {
+                                None
+                            };
+                            should_quit = true;
+                        }
                         Some(winit::VirtualKeyCode::Escape) => should_quit = true,
                         Some(winit::VirtualKeyCode::Up) => {
                             state.selected = state.selected.saturating_sub(1);
@@ -140,7 +153,7 @@ impl<Item: Display> MenuApp<Item> {
                 }
             });
             if should_quit {
-                return;
+                return result;
             } else {
                 // Update widgets if any event has happened
                 if ui.global_input().events().next().is_some() || state_updated {
