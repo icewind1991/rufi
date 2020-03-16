@@ -1,5 +1,6 @@
 use crate::renderer::Renderer;
 use crate::support::convert_event;
+use conrod_core::position::{Place, Relative};
 use conrod_core::text::FontCollection;
 use conrod_core::{widget_ids, Borderable, Ui};
 use futures_util::future::{select, Either};
@@ -159,7 +160,8 @@ impl<Item: Display> MenuApp<Item> {
                 if ui.global_input().events().next().is_some() || state_updated {
                     let mut ui = ui.set_widgets();
                     state_updated = false;
-                    if let Event::Search(query) = gui(&mut ui, &ids, &mut state) {
+                    let (height, event) = gui(&mut ui, &ids, &mut state);
+                    if let Event::Search(query) = event {
                         search_future = Some(Box::pin(search(query)));
                     }
                 }
@@ -190,7 +192,7 @@ impl<Item: Display> MenuApp<Item> {
 
 /// A set of reasonable stylistic defaults that works for the `gui` below.
 pub fn default_theme() -> conrod_core::Theme {
-    use conrod_core::position::{Align, Direction, Padding, Position, Relative};
+    use conrod_core::position::{Align, Direction, Padding, Position};
     conrod_core::Theme {
         name: "Default Theme".to_string(),
         padding: Padding::none(),
@@ -228,7 +230,7 @@ pub fn gui<Item: Display>(
     ui: &mut conrod_core::UiCell,
     ids: &Ids,
     app: &mut AppState<Item>,
-) -> Event {
+) -> (u32, Event) {
     use conrod_core::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
 
     const MARGIN: conrod_core::Scalar = 2.0;
@@ -236,12 +238,14 @@ pub fn gui<Item: Display>(
     widget::Canvas::new()
         .pad(MARGIN)
         .scroll_kids_vertically()
+        .border(1.0)
+        .border_color(ui.theme.label_color)
         .set(ids.canvas, ui);
 
     let search = widget::TextEdit::new(&app.search)
         .font_size(SUBTITLE_SIZE)
-        .mid_top_of(ids.canvas)
         .w_of(ids.canvas)
+        .mid_top()
         .h(SUBTITLE_SIZE as f64 + 1.0)
         .set(ids.input, ui);
 
@@ -250,9 +254,11 @@ pub fn gui<Item: Display>(
         .item_size(SUBTITLE_SIZE as f64 + 2.0)
         .scrollbar_next_to()
         .h(360.0)
-        .w_of(ids.canvas)
-        .align_left()
+        .mid_bottom()
+        .kid_area_w_of(ids.canvas)
         .set(ids.items, ui);
+
+    let height = SUBTITLE_SIZE * (app.items.len() as u32 + 1);
 
     // Handle the `ListSelect`s events.
     while let Some(event) = events.next(ui, |i| i == app.selected) {
@@ -270,6 +276,7 @@ pub fn gui<Item: Display>(
                     .color(color)
                     .label(&label)
                     .left_justify_label()
+                    .label_x(Relative::Place(Place::Start(None)))
                     .label_font_size(SUBTITLE_SIZE);
                 item.set(button, ui);
             }
@@ -289,11 +296,14 @@ pub fn gui<Item: Display>(
         s.set(ui);
     }
 
-    match search {
-        Some(search) => {
-            app.set_search(search.clone());
-            Event::Search(search)
-        }
-        None => Event::Continue,
-    }
+    (
+        height,
+        match search {
+            Some(search) => {
+                app.set_search(search.clone());
+                Event::Search(search)
+            }
+            None => Event::Continue,
+        },
+    )
 }

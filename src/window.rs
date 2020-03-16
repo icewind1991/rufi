@@ -134,6 +134,12 @@ impl Window {
         Some(inner_size.into())
     }
 
+    pub fn set_dimensions(&self, width: u32, height: u32) {
+        self.surface
+            .window()
+            .set_inner_size((width as f64, height as f64).into());
+    }
+
     pub fn handle_resize(&mut self) -> () {
         // Get the new dimensions for the viewport/framebuffers.
         let new_dimensions = self
