@@ -9,6 +9,7 @@ use vulkano::{
     },
 };
 
+use crate::app::INITIAL_HEIGHT;
 use crate::support::format_is_srgb;
 use vulkano_win::{self, VkSurfaceBuild};
 use winit::{self, EventsLoop};
@@ -22,8 +23,8 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(width: u32, height: u32, title: &str, events_loop: &EventsLoop) -> Self {
-        let size = winit::dpi::LogicalSize::new(width as f64, height as f64);
+    pub fn new(width: u32, title: &str, events_loop: &EventsLoop) -> Self {
+        let size = winit::dpi::LogicalSize::new(width as f64, INITIAL_HEIGHT as f64);
         let (width, height): (u32, u32) = size.into();
 
         let instance: Arc<Instance> = {
@@ -40,7 +41,7 @@ impl Window {
 
         let surface = winit::WindowBuilder::new()
             .with_dimensions(size)
-            .with_resizable(false)
+            .with_resizable(true)
             .with_title(title)
             .build_vk_surface(events_loop, instance.clone())
             .unwrap();
@@ -52,7 +53,7 @@ impl Window {
         surface.window().set_position(
             (
                 x_pos + (x_size - width as f64) / 2.0,
-                y_pos + (y_size - height as f64) / 2.0,
+                y_pos + (y_size - height as f64) / 3.0,
             )
                 .into(),
         );
@@ -134,10 +135,23 @@ impl Window {
         Some(inner_size.into())
     }
 
-    pub fn set_dimensions(&self, width: u32, height: u32) {
+    pub fn set_dimensions(&mut self, width: u32, height: u32) {
         self.surface
             .window()
             .set_inner_size((width as f64, height as f64).into());
+    }
+
+    pub fn set_height(&mut self, new_height: u32) -> bool {
+        let old_size: (u32, u32) = self.surface.window().get_inner_size().unwrap().into();
+        match old_size.into() {
+            (_width, height) if height == new_height => false,
+            (width, _height) => {
+                self.surface
+                    .window()
+                    .set_inner_size((width, new_height).into());
+                true
+            }
+        }
     }
 
     pub fn handle_resize(&mut self) -> () {

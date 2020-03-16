@@ -2,7 +2,7 @@ use crate::renderer::Renderer;
 use crate::support::convert_event;
 use conrod_core::position::{Place, Relative};
 use conrod_core::text::FontCollection;
-use conrod_core::{widget_ids, Borderable, Ui};
+use conrod_core::{widget_ids, Borderable, Sizeable, Ui};
 use futures_util::future::{select, Either};
 use futures_util::pin_mut;
 use std::cmp::min;
@@ -10,6 +10,8 @@ use std::fmt::Display;
 use std::future::Future;
 use tokio::time::{self, Duration};
 use winit::ElementState;
+
+pub const INITIAL_HEIGHT: u32 = 26;
 
 pub struct AppState<Item: Display> {
     items: Vec<Item>,
@@ -40,9 +42,9 @@ pub struct MenuApp<Item: Display> {
 
 impl<Item: Display> MenuApp<Item> {
     /// Simple constructor for the `DemoApp`.
-    pub fn new(width: u32, height: u32, events_loop: winit::EventsLoop) -> Self {
+    pub fn new(width: u32, events_loop: winit::EventsLoop) -> Self {
         // Create Ui and Ids of widgets to instantiate
-        let mut ui = conrod_core::UiBuilder::new([width as f64, height as f64])
+        let mut ui = conrod_core::UiBuilder::new([width as f64, INITIAL_HEIGHT as f64])
             .theme(default_theme())
             .build();
         let ids = Ids::new(ui.widget_id_generator());
@@ -164,6 +166,9 @@ impl<Item: Display> MenuApp<Item> {
                     if let Event::Search(query) = event {
                         search_future = Some(Box::pin(search(query)));
                     }
+                    if renderer.window.set_height(height) {
+                        // renderer.window.handle_resize();
+                    }
                 }
             }
 
@@ -231,20 +236,25 @@ pub fn gui<Item: Display>(
     ids: &Ids,
     app: &mut AppState<Item>,
 ) -> (u32, Event) {
-    use conrod_core::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
+    use conrod_core::{widget, Colorable, Labelable, Positionable, Widget};
 
     const MARGIN: conrod_core::Scalar = 2.0;
     const SUBTITLE_SIZE: conrod_core::FontSize = 16;
+
+    let item_size = SUBTITLE_SIZE + 2;
+    let height = item_size * (app.items.len() as u32 + 1) + 4;
+
     widget::Canvas::new()
         .pad(MARGIN)
         .scroll_kids_vertically()
         .border(1.0)
         .border_color(ui.theme.label_color)
+        .h(height as f64)
         .set(ids.canvas, ui);
 
     let search = widget::TextEdit::new(&app.search)
         .font_size(SUBTITLE_SIZE)
-        .w_of(ids.canvas)
+        .kid_area_w_of(ids.canvas)
         .mid_top()
         .h(SUBTITLE_SIZE as f64 + 1.0)
         .set(ids.input, ui);
@@ -253,12 +263,10 @@ pub fn gui<Item: Display>(
         .flow_down()
         .item_size(SUBTITLE_SIZE as f64 + 2.0)
         .scrollbar_next_to()
-        .h(360.0)
+        .h(item_size as f64 * (app.items.len() as f64))
         .mid_bottom()
         .kid_area_w_of(ids.canvas)
         .set(ids.items, ui);
-
-    let height = SUBTITLE_SIZE * (app.items.len() as u32 + 1);
 
     // Handle the `ListSelect`s events.
     while let Some(event) = events.next(ui, |i| i == app.selected) {

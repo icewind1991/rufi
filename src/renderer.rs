@@ -10,6 +10,7 @@ use vulkano::{
     sync::FenceSignalFuture,
 };
 
+use crate::app::INITIAL_HEIGHT;
 use crate::window::Window;
 use conrod_core::image::Map;
 use conrod_vulkano::Image;
@@ -40,8 +41,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(events_loop: &winit::EventsLoop, title: &str, width: u32, height: u32) -> Self {
-        let window = Window::new(width, height, title, events_loop);
+    pub fn new(events_loop: &winit::EventsLoop, title: &str, width: u32) -> Self {
+        let window = Window::new(width, title, events_loop);
 
         let render_target = RenderTarget::new(&window);
 
@@ -52,7 +53,7 @@ impl Renderer {
             window.device.clone(),
             subpass,
             queue.family(),
-            [width, height],
+            [width, INITIAL_HEIGHT],
             window.surface.window().get_hidpi_factor() as f64,
         )
         .unwrap();
