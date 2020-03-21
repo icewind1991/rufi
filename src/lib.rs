@@ -3,5 +3,6 @@ mod renderer;
 mod support;
 mod window;
 
+pub use winit::EventsLoop;
 pub use app::{AppState, Event, MenuApp};
 pub use renderer::Renderer;
