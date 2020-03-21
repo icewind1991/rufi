@@ -156,6 +156,7 @@ impl<Item: Display> MenuApp<Item> {
                 }
             });
             if should_quit {
+                renderer.window.surface.window().hide();
                 return result;
             } else {
                 // Update widgets if any event has happened
