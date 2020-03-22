@@ -99,6 +99,7 @@ impl<Item: Display + Send + 'static> MenuApp<Item> {
                 width: ui.win_w,
                 height: ui.win_h,
             })
+            .with_visible(false)
             .build(&event_loop)
             .unwrap();
         let mut renderer = Renderer::new(&window);
@@ -168,13 +169,10 @@ impl<Item: Display + Send + 'static> MenuApp<Item> {
                     }
                 }
                 Event::RedrawRequested(_) => {
-                    // If the view has changed at all, it's time to draw.
-                    let primitives = match ui.draw_if_changed() {
-                        None => return,
-                        Some(ps) => ps,
-                    };
-
-                    renderer.render(primitives, &window, &image_map);
+                    if let Some(primitives) = ui.draw_if_changed() {
+                        renderer.render(primitives, &window, &image_map);
+                    }
+                    window.set_visible(true);
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::KeyboardInput {
