@@ -10,7 +10,7 @@ use crate::renderer::Renderer;
 use crate::window::convert_event;
 use std::sync::mpsc::channel;
 use std::time::Duration;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::{
     event_loop::{ControlFlow, EventLoop},
@@ -103,6 +103,7 @@ impl<Item: Display + Send + 'static> MenuApp<Item> {
             .build(&event_loop)
             .unwrap();
         let mut renderer = Renderer::new(&window);
+        let mut visible = false;
 
         let image_map = conrod_core::image::Map::new();
 
@@ -172,7 +173,21 @@ impl<Item: Display + Send + 'static> MenuApp<Item> {
                     if let Some(primitives) = ui.draw_if_changed() {
                         renderer.render(primitives, &window, &image_map);
                     }
-                    window.set_visible(true);
+
+                    if !visible {
+                        window.set_visible(true);
+                        let monitor = window.primary_monitor();
+                        let (x_pos, y_pos): (i32, i32) = monitor.position().into();
+                        let (x_size, y_size): (u32, u32) = monitor.size().into();
+
+                        let size = window.inner_size();
+                        window.set_outer_position(PhysicalPosition::new(
+                            x_pos + (x_size - size.width) as i32 / 2,
+                            y_pos + (y_size - size.height) as i32 / 3,
+                        ));
+                        window.set_decorations(false);
+                        visible = true;
+                    }
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::KeyboardInput {

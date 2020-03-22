@@ -13,6 +13,3 @@ rand = "0.7"
 conrod_wgpu = "0.69"
 winit = "0.21"
 wgpu = "0.4"
-
-[dev-dependencies]
-tokio = { version = "0.2.13", features = ["macros"] }
