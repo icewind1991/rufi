@@ -1,17 +1,24 @@
-use crate::renderer::Renderer;
-use crate::support::convert_event;
+// use crate::renderer::Renderer;
+// use crate::support::convert_event;
 use conrod_core::position::{Place, Relative};
 use conrod_core::text::FontCollection;
 use conrod_core::{widget_ids, Borderable, Sizeable, Ui};
-use futures_util::future::{select, Either};
-use futures_util::pin_mut;
 use std::cmp::min;
 use std::fmt::Display;
-use std::future::Future;
-use tokio::time::{self, Duration};
-use winit::ElementState;
+
+use crate::window::convert_event;
+use std::sync::mpsc::channel;
+use std::time::Duration;
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::{
+    event_loop::{ControlFlow, EventLoop},
+    platform::desktop::EventLoopExtDesktop,
+};
 
 pub const INITIAL_HEIGHT: u32 = 26;
+
+const MSAA_SAMPLES: u32 = 1;
 
 pub struct AppState<Item: Display> {
     items: Vec<Item>,
@@ -26,23 +33,23 @@ impl<Item: Display> AppState<Item> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Event {
+pub enum AppEvent {
     Search(String),
     Continue,
     Exit,
 }
 
 /// A demonstration of some application state we want to control with a conrod GUI.
-pub struct MenuApp<Item: Display> {
+pub struct MenuApp<Item: Display + Send + 'static> {
     state: AppState<Item>,
     ids: Ids,
     ui: Ui,
-    events_loop: winit::EventsLoop,
+    title: String,
 }
 
-impl<Item: Display> MenuApp<Item> {
+impl<Item: Display + Send + 'static> MenuApp<Item> {
     /// Simple constructor for the `DemoApp`.
-    pub fn new(width: u32, events_loop: winit::EventsLoop) -> Self {
+    pub fn new(width: u32, title: &str) -> Self {
         // Create Ui and Ids of widgets to instantiate
         let mut ui = conrod_core::UiBuilder::new([width as f64, INITIAL_HEIGHT as f64])
             .theme(default_theme())
@@ -65,7 +72,7 @@ impl<Item: Display> MenuApp<Item> {
             },
             ids,
             ui,
-            events_loop,
+            title: title.to_string(),
         }
     }
 
@@ -74,125 +81,271 @@ impl<Item: Display> MenuApp<Item> {
         self.state.selected = 0;
     }
 
-    pub async fn main_loop<Search, SearchFuture>(
-        self,
-        mut renderer: Renderer,
-        search: Search,
-    ) -> Option<Item>
+    pub fn main_loop<Search>(self, search: Search) -> Option<Item>
     where
-        Search: Fn(String) -> SearchFuture,
-        SearchFuture: Future<Output = Vec<Item>>,
+        Search: Fn(String) -> Vec<Item> + Send + 'static,
     {
-        let mut should_quit = false;
-        let mut result = None;
-
-        let mut vsync = time::interval(Duration::from_millis(1000 / 60));
-
         let MenuApp {
             mut state,
             ids,
             mut ui,
-            mut events_loop,
+            title,
         } = self;
+
+        let mut event_loop = EventLoop::new();
+
+        // Create the window and surface.
+        #[cfg(not(feature = "gl"))]
+        let (window, mut size, surface) = {
+            let window = winit::window::WindowBuilder::new()
+                .with_title(&title)
+                .with_inner_size(winit::dpi::LogicalSize {
+                    width: ui.win_w,
+                    height: ui.win_h,
+                })
+                .build(&event_loop)
+                .unwrap();
+            let size = window.inner_size();
+            let surface = wgpu::Surface::create(&window);
+            (window, size, surface)
+        };
+
+        // Select an adapter and gpu device.
+        let adapter_opts = wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            backends: wgpu::BackendBit::PRIMARY,
+        };
+        let adapter = wgpu::Adapter::request(&adapter_opts).unwrap();
+        let extensions = wgpu::Extensions {
+            anisotropic_filtering: false,
+        };
+        let limits = wgpu::Limits::default();
+        let device_desc = wgpu::DeviceDescriptor { extensions, limits };
+        let (device, mut queue) = adapter.request_device(&device_desc);
+
+        // Create the swapchain.
+        let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let mut swap_chain_desc = wgpu::SwapChainDescriptor {
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            format,
+            width: size.width,
+            height: size.height,
+            present_mode: wgpu::PresentMode::Vsync,
+        };
+        let mut swap_chain = device.create_swap_chain(&surface, &swap_chain_desc);
+
+        // Create the renderer for rendering conrod primitives.
+        let mut renderer = conrod_wgpu::Renderer::new(&device, MSAA_SAMPLES, format);
+
+        // The intermediary multisampled texture that will be resolved (MSAA).
+        let mut multisampled_framebuffer =
+            create_multisampled_framebuffer(&device, &swap_chain_desc, MSAA_SAMPLES);
+
+        let image_map = conrod_core::image::Map::new();
+
+        let mut result = None;
+
+        let (query_tx, query_rx) = channel();
+        let (items_tx, items_rx) = channel();
+
+        let event_proxy = event_loop.create_proxy();
+
+        std::thread::spawn(move || {
+            // first block for the first query
+            while let Ok(mut query) = query_rx.recv() {
+                // then wait until there is no new query set for some duration
+                while let Ok(new_query) = query_rx.recv_timeout(Duration::from_millis(100)) {
+                    query = new_query;
+                }
+
+                if let Err(_) = items_tx.send(search(query)) {
+                    break;
+                }
+
+                // wakeup the event loop
+                let _ = event_proxy.send_event(());
+            }
+        });
 
         let mut state_updated = false;
 
-        let mut search_future = None;
-
-        loop {
-            if let Some(primitives) = ui.draw_if_changed() {
-                renderer.render(primitives)
+        event_loop.run_return(|event, _, control_flow| {
+            if let Some(event) = convert_event(&event, &window) {
+                ui.handle_event(event);
             }
 
-            events_loop.poll_events(|event| {
-                if let Some(event) = convert_event(event.clone(), &renderer.window) {
-                    ui.handle_event(event);
-                }
+            *control_flow = if cfg!(feature = "metal-auto-capture") {
+                ControlFlow::Exit
+            } else {
+                ControlFlow::Wait
+            };
 
-                // Close window if the escape key or the exit button is pressed
-                match event {
-                    winit::Event::WindowEvent {
-                        event:
-                            winit::WindowEvent::KeyboardInput {
-                                input:
-                                    winit::KeyboardInput {
-                                        virtual_keycode,
-                                        state: ElementState::Pressed,
-                                        ..
-                                    },
+            if let Ok(items) = items_rx.try_recv() {
+                state.items = items;
+                state_updated = true
+            };
+
+            match event {
+                Event::MainEventsCleared => {
+                    // Update widgets if any event has happened
+                    if ui.global_input().events().next().is_some() || state_updated {
+                        state_updated = false;
+                        let mut ui = ui.set_widgets();
+                        let (height, event) = gui(&mut ui, &ids, &mut state);
+                        if let AppEvent::Search(query) = event {
+                            if let Err(e) = query_tx.send(query) {
+                                eprintln!("{}", e);
+                            }
+                        }
+
+                        window.set_inner_size(LogicalSize::new(
+                            window.inner_size().to_logical(window.scale_factor()).width,
+                            height,
+                        ));
+                        window.request_redraw();
+                    }
+                }
+                Event::RedrawRequested(_) => {
+                    // If the view has changed at all, it's time to draw.
+                    let primitives = match ui.draw_if_changed() {
+                        None => return,
+                        Some(ps) => ps,
+                    };
+
+                    // The window frame that we will draw to.
+                    let frame = swap_chain.get_next_texture();
+
+                    // Begin encoding commands.
+                    let cmd_encoder_desc = wgpu::CommandEncoderDescriptor { todo: 0 };
+                    let mut encoder = device.create_command_encoder(&cmd_encoder_desc);
+
+                    // Feed the renderer primitives and update glyph cache texture if necessary.
+                    let scale_factor = window.scale_factor();
+                    let [win_w, win_h]: [f32; 2] = [size.width as f32, size.height as f32];
+                    let viewport = [0.0, 0.0, win_w, win_h];
+                    if let Some(cmd) = renderer
+                        .fill(&image_map, viewport, scale_factor, primitives)
+                        .unwrap()
+                    {
+                        cmd.load_buffer_and_encode(&device, &mut encoder);
+                    }
+
+                    // Begin the render pass and add the draw commands.
+                    {
+                        // This condition allows to more easily tweak the MSAA_SAMPLES constant.
+                        let (attachment, resolve_target) = match MSAA_SAMPLES {
+                            1 => (&frame.view, None),
+                            _ => (&multisampled_framebuffer, Some(&frame.view)),
+                        };
+                        let color_attachment_desc = wgpu::RenderPassColorAttachmentDescriptor {
+                            attachment,
+                            resolve_target,
+                            load_op: wgpu::LoadOp::Clear,
+                            store_op: wgpu::StoreOp::Store,
+                            clear_color: wgpu::Color::BLACK,
+                        };
+
+                        let render_pass_desc = wgpu::RenderPassDescriptor {
+                            color_attachments: &[color_attachment_desc],
+                            depth_stencil_attachment: None,
+                        };
+                        let mut render_pass = encoder.begin_render_pass(&render_pass_desc);
+
+                        let render = renderer.render(&device, &image_map);
+                        render_pass.set_pipeline(render.pipeline);
+                        render_pass.set_vertex_buffers(0, &[(&render.vertex_buffer, 0)]);
+                        let instance_range = 0..1;
+                        for cmd in render.commands {
+                            match cmd {
+                                conrod_wgpu::RenderPassCommand::SetBindGroup { bind_group } => {
+                                    render_pass.set_bind_group(0, bind_group, &[]);
+                                }
+                                conrod_wgpu::RenderPassCommand::SetScissor {
+                                    top_left,
+                                    dimensions,
+                                } => {
+                                    let [x, y] = top_left;
+                                    let [w, h] = dimensions;
+                                    render_pass.set_scissor_rect(x, y, w, h);
+                                }
+                                conrod_wgpu::RenderPassCommand::Draw { vertex_range } => {
+                                    render_pass.draw(vertex_range, instance_range.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    queue.submit(&[encoder.finish()]);
+                }
+                Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                virtual_keycode,
+                                state: ElementState::Pressed,
                                 ..
                             },
                         ..
                     } => match virtual_keycode {
-                        Some(winit::VirtualKeyCode::Return) => {
+                        Some(VirtualKeyCode::Return) => {
                             result = if state.items.len() > state.selected {
                                 Some(state.items.remove(state.selected))
                             } else {
                                 None
                             };
-                            should_quit = true;
+                            *control_flow = ControlFlow::Exit;
                         }
-                        Some(winit::VirtualKeyCode::Escape) => should_quit = true,
-                        Some(winit::VirtualKeyCode::Up) => {
+                        Some(VirtualKeyCode::Escape) => *control_flow = ControlFlow::Exit,
+                        Some(VirtualKeyCode::Up) => {
                             state.selected = state.selected.saturating_sub(1);
                             state_updated = true;
                         }
-                        Some(winit::VirtualKeyCode::Down) => {
+                        Some(VirtualKeyCode::Down) => {
                             state.selected =
                                 min(state.selected + 1, state.items.len().saturating_sub(1));
                             state_updated = true;
                         }
                         _ => {}
                     },
-                    winit::Event::WindowEvent {
-                        event: winit::WindowEvent::CloseRequested,
-                        ..
-                    } => should_quit = true,
-                    winit::Event::WindowEvent {
-                        event: winit::WindowEvent::Focused(focused),
-                        ..
-                    } => should_quit = !focused,
-                    _ => {}
-                }
-            });
-            if should_quit {
-                renderer.window.surface.window().hide();
-                return result;
-            } else {
-                // Update widgets if any event has happened
-                if ui.global_input().events().next().is_some() || state_updated {
-                    let mut ui = ui.set_widgets();
-                    state_updated = false;
-                    let (height, event) = gui(&mut ui, &ids, &mut state);
-                    if let Event::Search(query) = event {
-                        search_future = Some(Box::pin(search(query)));
+                    WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                        *control_flow = ControlFlow::Exit
                     }
-                    if renderer.window.set_height(height) {
-                        // renderer.window.handle_resize();
-                    }
-                }
-            }
-
-            let tick = vsync.tick();
-            pin_mut!(tick);
-
-            match search_future.take() {
-                Some(search_fut) => {
-                    match select(tick, search_fut).await {
-                        Either::Left((_, search_fut)) => search_future = Some(search_fut), // vsync before search completion
-                        Either::Right((search_result, _)) => {
-                            // search complete before vsync
-                            state.items = search_result;
-                            state.selected = 0;
-                            state_updated = true;
+                    WindowEvent::Focused(focused) => {
+                        if !focused {
+                            *control_flow = ControlFlow::Exit;
                         }
                     }
-                }
-                None => {
-                    tick.await;
-                }
+                    WindowEvent::Resized(new_size) => {
+                        size = new_size;
+                        swap_chain_desc.width = new_size.width;
+                        swap_chain_desc.height = new_size.height;
+                        swap_chain = device.create_swap_chain(&surface, &swap_chain_desc);
+                        multisampled_framebuffer = create_multisampled_framebuffer(
+                            &device,
+                            &swap_chain_desc,
+                            MSAA_SAMPLES,
+                        );
+                    }
+                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                        size = *new_inner_size;
+                        swap_chain_desc.width = new_inner_size.width;
+                        swap_chain_desc.height = new_inner_size.height;
+                        swap_chain = device.create_swap_chain(&surface, &swap_chain_desc);
+                        multisampled_framebuffer = create_multisampled_framebuffer(
+                            &device,
+                            &swap_chain_desc,
+                            MSAA_SAMPLES,
+                        );
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
-        }
+        });
+
+        window.set_visible(false);
+
+        result
     }
 }
 
@@ -236,7 +389,7 @@ pub fn gui<Item: Display>(
     ui: &mut conrod_core::UiCell,
     ids: &Ids,
     app: &mut AppState<Item>,
-) -> (u32, Event) {
+) -> (u32, AppEvent) {
     use conrod_core::{widget, Colorable, Labelable, Positionable, Widget};
 
     const MARGIN: conrod_core::Scalar = 2.0;
@@ -310,9 +463,33 @@ pub fn gui<Item: Display>(
         match search {
             Some(search) => {
                 app.set_search(search.clone());
-                Event::Search(search)
+                AppEvent::Search(search)
             }
-            None => Event::Continue,
+            None => AppEvent::Continue,
         },
     )
+}
+
+fn create_multisampled_framebuffer(
+    device: &wgpu::Device,
+    sc_desc: &wgpu::SwapChainDescriptor,
+    sample_count: u32,
+) -> wgpu::TextureView {
+    let multisampled_texture_extent = wgpu::Extent3d {
+        width: sc_desc.width,
+        height: sc_desc.height,
+        depth: 1,
+    };
+    let multisampled_frame_descriptor = &wgpu::TextureDescriptor {
+        size: multisampled_texture_extent,
+        array_layer_count: 1,
+        mip_level_count: 1,
+        sample_count: sample_count,
+        dimension: wgpu::TextureDimension::D2,
+        format: sc_desc.format,
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+    };
+    device
+        .create_texture(multisampled_frame_descriptor)
+        .create_default_view()
 }

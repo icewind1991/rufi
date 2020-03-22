@@ -1,19 +1,11 @@
-use rufi::{MenuApp, Renderer};
-use tokio::time::Duration;
-use winit::EventsLoop;
+use rufi::MenuApp;
 
 pub const WIN_W: u32 = 600;
 
-#[tokio::main]
-async fn main() {
-    let events_loop = EventsLoop::new();
+fn main() {
+    let app: MenuApp<String> = MenuApp::new(WIN_W, "Rufi test");
 
-    let renderer = Renderer::new(&events_loop, "Rufi Test", WIN_W);
-
-    let app = MenuApp::new(WIN_W, events_loop);
-
-    app.main_loop(renderer, |query| async move {
-        tokio::time::delay_for(Duration::from_millis(100)).await; // debounce
+    app.main_loop(|query| {
         let mut acc = vec![];
         let mut result: Vec<String> = vec![];
         for char in query.chars() {
@@ -22,6 +14,7 @@ async fn main() {
         }
 
         result
-    })
-    .await;
+    });
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
 }

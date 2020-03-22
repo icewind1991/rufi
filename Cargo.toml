@@ -6,17 +6,13 @@ edition = "2018"
 
 [dependencies]
 conrod_core =  "0.69"
-conrod_vulkano = "0.69.0"
-vulkano = "0.16"
-vulkano-shaders = "0.16"
 conrod_winit = "0.69"
 find_folder = "0.3"
 image = "0.22"
-vulkano-win = "0.16"
-winit = "0.19"
 rand = "0.7"
-tokio = { version = "0.2.13", features = ["time"] }
-futures-util = "0.3.4"
+conrod_wgpu = "0.69"
+winit = "0.21"
+wgpu = "0.4"
 
 [dev-dependencies]
 tokio = { version = "0.2.13", features = ["macros"] }
