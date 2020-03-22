@@ -1,5 +1,6 @@
 mod app;
 // mod renderer;
+mod renderer;
 mod support;
 mod window;
 
